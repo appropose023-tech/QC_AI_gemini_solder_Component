@@ -30,7 +30,7 @@ workflows:
       - name: Scaffold Flutter project
         script: |
           echo ">>> Creating fresh Flutter project..."
-          flutter create --project-name pcb_aoi_inspector --platforms=android .
+          flutter create --project-name Mishon_aoi_inspector --platforms=android .
 
       # ----------------------------------------------------
       # 3. RESTORE LIB + PUBSPEC
