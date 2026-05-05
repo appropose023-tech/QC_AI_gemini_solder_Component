@@ -28,8 +28,11 @@ class _PCBInspectorAppState extends State<PCBInspectorApp> {
   String _status = "Ready";
   String? _reportUrl;
 
+  // --- ADDED MISSING DECLARATIONS ---
+  String _selectedMode = 'Normal'; 
+  String _selectedSide = 'Front';
+
   final TextEditingController _projectController = TextEditingController();
-  // Ensure this IP matches your Google Cloud / Server address
   final String serverIp = "http://104.154.76.47:5001";
 
   @override
@@ -38,7 +41,6 @@ class _PCBInspectorAppState extends State<PCBInspectorApp> {
     _fetchProjects();
   }
 
-  // 1. Fetch existing project folders from the server
   Future<void> _fetchProjects() async {
     try {
       final response = await http.get(Uri.parse('$serverIp/get_projects'));
@@ -53,16 +55,14 @@ class _PCBInspectorAppState extends State<PCBInspectorApp> {
     }
   }
 
-  // 2. Capture, Crop, and Upload logic
   Future<void> _processImage({required bool isGolden}) async {
     final picker = ImagePicker();
     final pickedFile = await picker.pickImage(
       source: ImageSource.camera,
-      imageQuality: 90, // High quality for YOLO detection
+      imageQuality: 90,
     );
 
     if (pickedFile != null) {
-      // IMAGE CROPPER (Updated for version 12.1.0+)
       CroppedFile? croppedFile = await ImageCropper().cropImage(
         sourcePath: pickedFile.path,
         uiSettings: [
@@ -87,52 +87,43 @@ class _PCBInspectorAppState extends State<PCBInspectorApp> {
         _reportUrl = null;
       });
 
-     // UPLOAD LOGIC
-try {
-  String endpoint = isGolden ? "/upload_golden" : "/inspect";
-  var request = http.MultipartRequest('POST', Uri.parse('$serverIp$endpoint'));
+      try {
+        String endpoint = isGolden ? "/upload_golden" : "/inspect";
+        var request = http.MultipartRequest('POST', Uri.parse('$serverIp$endpoint'));
 
-  // 1. Project Name from TextField
-  String projName = _projectController.text.trim().replaceAll(" ", "_");
-  if (projName.isEmpty) {
-    setState(() => _status = "Error: Project Name Required");
-    return;
-  }
+        String projName = _projectController.text.trim().replaceAll(" ", "_");
+        if (projName.isEmpty) {
+          setState(() => _status = "Error: Project Name Required");
+          return;
+        }
 
-  request.fields['project_name'] = projName;
-  request.fields['batch_number'] = _batchNumber;
+        request.fields['project_name'] = projName;
+        request.fields['batch_number'] = _batchNumber;
+        request.fields['inspection_type'] = _selectedMode.toLowerCase(); 
+        request.fields['selected_side'] = _selectedSide.toLowerCase();
 
-  // --- NEW FIELDS FOR DUAL-MODE INSPECTION ---
-  // Convert to lowercase to match Python's .lower() expectations
-  request.fields['inspection_type'] = _selectedMode.toLowerCase(); 
-  request.fields['selected_side'] = _selectedSide.toLowerCase();
-  // -------------------------------------------
+        request.files.add(await http.MultipartFile.fromPath('image', _image!.path));
 
-  request.files.add(await http.MultipartFile.fromPath('image', _image!.path));
+        var streamedResponse = await request.send().timeout(Duration(seconds: 60));
+        var response = await http.Response.fromStream(streamedResponse);
 
-  // Set timeout to 60s as deep inspection (YOLO x2 + Alignment) takes longer
-  var streamedResponse = await request.send().timeout(Duration(seconds: 60));
-  var response = await http.Response.fromStream(streamedResponse);
-
-  if (response.statusCode == 200) {
-    var data = json.decode(response.body);
-    setState(() {
-      // Backend now returns specific status like "Different PCB Detected" or "Success"
-      _status = isGolden ? "Golden Saved Successfully!" : data['status'];
-      
-      if (!isGolden) {
-        // Timestamp forces Flutter to reload the image from the server even if URL is same
-        _reportUrl = serverIp + data['report_url'] + "?t=${DateTime.now().millisecondsSinceEpoch}";
+        if (response.statusCode == 200) {
+          var data = json.decode(response.body);
+          setState(() {
+            _status = isGolden ? "Golden Saved Successfully!" : data['status'];
+            if (!isGolden) {
+              _reportUrl = serverIp + data['report_url'] + "?t=${DateTime.now().millisecondsSinceEpoch}";
+            }
+          });
+          if (isGolden) _fetchProjects();
+        } else {
+          setState(() => _status = "Server Error: ${response.statusCode}");
+        }
+      } catch (e) {
+        setState(() => _status = "Connection Failed: $e");
       }
-    });
-    
-    if (isGolden) _fetchProjects();
-  } else {
-    setState(() => _status = "Server Error: ${response.statusCode}");
-  }
-} catch (e) {
-  setState(() => _status = "Connection Failed: $e");
-}
+    } // Closes if (pickedFile != null)
+  } // Closes _processImage
 
   @override
   Widget build(BuildContext context) {
@@ -148,7 +139,6 @@ try {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // PROJECT INPUT
               TextField(
                 controller: _projectController,
                 decoration: InputDecoration(
@@ -159,8 +149,6 @@ try {
                 ),
               ),
               SizedBox(height: 12),
-
-              // DYNAMIC PROJECT DROPDOWN
               DropdownButtonFormField<String>(
                 decoration: InputDecoration(
                   border: OutlineInputBorder(),
@@ -178,8 +166,31 @@ try {
                 },
               ),
               SizedBox(height: 12),
+              
+              // --- ADDED UI FOR MODE & SIDE SELECTION ---
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedMode,
+                      decoration: InputDecoration(labelText: "Mode", border: OutlineInputBorder()),
+                      items: ["Normal", "Deep"].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                      onChanged: (val) => setState(() => _selectedMode = val!),
+                    ),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      value: _selectedSide,
+                      decoration: InputDecoration(labelText: "Side", border: OutlineInputBorder()),
+                      items: ["Front", "Back"].map((e) => DropdownMenuItem(value: e, child: Text(e))).toList(),
+                      onChanged: (val) => setState(() => _selectedSide = val!),
+                    ),
+                  ),
+                ],
+              ),
+              SizedBox(height: 12),
 
-              // BATCH NUMBER
               TextField(
                 decoration: InputDecoration(
                   labelText: "Batch Number", 
@@ -188,8 +199,6 @@ try {
                 onChanged: (val) => _batchNumber = val,
               ),
               SizedBox(height: 20),
-
-              // ACTION BUTTONS
               Row(
                 children: [
                   Expanded(
@@ -219,10 +228,7 @@ try {
                   ),
                 ],
               ),
-
               Divider(height: 40, thickness: 1),
-
-              // STATUS DISPLAY
               Center(
                 child: Text(
                   "Status: $_status",
@@ -236,8 +242,6 @@ try {
                   ),
                 ),
               ),
-
-              // RESULTS DISPLAY
               if (_reportUrl != null) ...[
                 SizedBox(height: 20),
                 Text("Inspection Report (AI Analysis):", 
@@ -268,5 +272,4 @@ try {
       ),
     );
   }
- }
 }
