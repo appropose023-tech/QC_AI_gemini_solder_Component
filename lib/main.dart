@@ -87,44 +87,52 @@ class _PCBInspectorAppState extends State<PCBInspectorApp> {
         _reportUrl = null;
       });
 
-      // UPLOAD LOGIC
-      try {
-        String endpoint = isGolden ? "/upload_golden" : "/inspect";
-        var request = http.MultipartRequest('POST', Uri.parse('$serverIp$endpoint'));
+     // UPLOAD LOGIC
+try {
+  String endpoint = isGolden ? "/upload_golden" : "/inspect";
+  var request = http.MultipartRequest('POST', Uri.parse('$serverIp$endpoint'));
 
-        // Project Name from TextField
-        String projName = _projectController.text.trim().replaceAll(" ", "_");
-        if (projName.isEmpty) {
-          setState(() => _status = "Error: Project Name Required");
-          return;
-        }
-
-        request.fields['project_name'] = projName;
-        request.fields['batch_number'] = _batchNumber;
-        request.files.add(await http.MultipartFile.fromPath('image', _image!.path));
-
-        var streamedResponse = await request.send().timeout(Duration(seconds: 60));
-        var response = await http.Response.fromStream(streamedResponse);
-
-        if (response.statusCode == 200) {
-          var data = json.decode(response.body);
-          setState(() {
-            _status = isGolden ? "Golden Saved Successfully!" : data['status'];
-            if (!isGolden) {
-              // Add timestamp to force image refresh in Flutter
-              _reportUrl = serverIp + data['report_url'] + "?t=${DateTime.now().millisecondsSinceEpoch}";
-            }
-          });
-          // Refresh project list if we added a new project
-          if (isGolden) _fetchProjects();
-        } else {
-          setState(() => _status = "Server Error: ${response.statusCode}");
-        }
-      } catch (e) {
-        setState(() => _status = "Connection Failed: $e");
-      }
-    }
+  // 1. Project Name from TextField
+  String projName = _projectController.text.trim().replaceAll(" ", "_");
+  if (projName.isEmpty) {
+    setState(() => _status = "Error: Project Name Required");
+    return;
   }
+
+  request.fields['project_name'] = projName;
+  request.fields['batch_number'] = _batchNumber;
+
+  // --- NEW FIELDS FOR DUAL-MODE INSPECTION ---
+  // Convert to lowercase to match Python's .lower() expectations
+  request.fields['inspection_type'] = _selectedMode.toLowerCase(); 
+  request.fields['selected_side'] = _selectedSide.toLowerCase();
+  // -------------------------------------------
+
+  request.files.add(await http.MultipartFile.fromPath('image', _image!.path));
+
+  // Set timeout to 60s as deep inspection (YOLO x2 + Alignment) takes longer
+  var streamedResponse = await request.send().timeout(Duration(seconds: 60));
+  var response = await http.Response.fromStream(streamedResponse);
+
+  if (response.statusCode == 200) {
+    var data = json.decode(response.body);
+    setState(() {
+      // Backend now returns specific status like "Different PCB Detected" or "Success"
+      _status = isGolden ? "Golden Saved Successfully!" : data['status'];
+      
+      if (!isGolden) {
+        // Timestamp forces Flutter to reload the image from the server even if URL is same
+        _reportUrl = serverIp + data['report_url'] + "?t=${DateTime.now().millisecondsSinceEpoch}";
+      }
+    });
+    
+    if (isGolden) _fetchProjects();
+  } else {
+    setState(() => _status = "Server Error: ${response.statusCode}");
+  }
+} catch (e) {
+  setState(() => _status = "Connection Failed: $e");
+}
 
   @override
   Widget build(BuildContext context) {
